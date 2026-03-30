@@ -109,6 +109,69 @@ def tickers():
     result = {sym: {'price':sum(p['price'] for p in ps)/len(ps),'change':sum(p['change'] for p in ps)/len(ps),'high':max(p['high'] for p in ps),'low':min(p['low'] for p in ps),'sources':len(ps)} for sym,ps in all_prices.items() if ps}
     return jsonify(result)
 
+@app.route('/ticker', methods=['GET'])
+def ticker():
+    """Fetch price + 24H data for any token — tries MEXC, Binance, Bybit"""
+    symbol = request.args.get('symbol', '').upper().replace('USDT','').replace('$','').strip()
+    if not symbol:
+        return jsonify({'error': 'symbol required'}), 400
+
+    price = change = high = low = vol = 0
+    source = ''
+
+    # Try MEXC first
+    try:
+        r = requests.get(f"https://www.mexc.com/open/api/v2/market/ticker?symbol={symbol}_USDT", timeout=8)
+        d = r.json().get("data", [{}])
+        if d and isinstance(d, list): d = d[0]
+        if d and float(d.get("last", 0)) > 0:
+            price  = float(d.get("last", 0))
+            change = float(d.get("priceChangePercent", 0))
+            high   = float(d.get("high", 0))
+            low    = float(d.get("low", 0))
+            vol    = float(d.get("volume", 0))
+            source = 'MEXC'
+    except: pass
+
+    # Fallback Binance
+    if not price:
+        try:
+            r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}USDT", timeout=8)
+            d = r.json()
+            if float(d.get("lastPrice", 0)) > 0:
+                price  = float(d["lastPrice"])
+                change = float(d["priceChangePercent"])
+                high   = float(d["highPrice"])
+                low    = float(d["lowPrice"])
+                vol    = float(d["quoteVolume"])
+                source = 'BINANCE'
+        except: pass
+
+    # Fallback Bybit
+    if not price:
+        try:
+            r = requests.get(f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={symbol}USDT", timeout=8)
+            d = r.json()["result"]["list"][0]
+            price  = float(d["lastPrice"])
+            change = float(d.get("price24hPcnt", 0)) * 100
+            high   = float(d["highPrice24h"])
+            low    = float(d["lowPrice24h"])
+            source = 'BYBIT'
+        except: pass
+
+    if not price:
+        return jsonify({'error': f'{symbol} not found on MEXC, Binance or Bybit'}), 404
+
+    return jsonify({
+        'symbol': symbol,
+        'price': price,
+        'change': change,
+        'high': high,
+        'low': low,
+        'volume': vol,
+        'source': source,
+    })
+
 @app.route('/ping', methods=['GET'])
 def ping():
     return jsonify({'status': 'CIPHER server online'})
