@@ -126,7 +126,81 @@ def tickers():
     }
     return jsonify(result)
 
-@app.route('/ticker', methods=['GET'])
+@app.route('/mexc-scan', methods=['GET'])
+def mexc_scan():
+    """Fetch all MEXC tickers for the scanner"""
+    try:
+        r = requests.get('https://api.mexc.com/api/v3/ticker/24hr', timeout=12)
+        if r.ok:
+            data = r.json()
+            if isinstance(data, list) and len(data) > 0:
+                result = {}
+                for t in data:
+                    sym = t.get('symbol','')
+                    if not sym.endswith('USDT'): continue
+                    sym = sym.replace('USDT','')
+                    if not sym: continue
+                    price      = float(t.get('lastPrice', 0) or 0)
+                    open_price = float(t.get('openPrice', 0) or 0)
+                    high       = float(t.get('highPrice', 0) or 0)
+                    low        = float(t.get('lowPrice', 0) or 0)
+                    vol        = float(t.get('quoteVolume', 0) or 0)
+                    if price <= 0: continue
+
+                    # Calculate change from open price (more reliable than priceChangePercent)
+                    if open_price > 0:
+                        change = ((price - open_price) / open_price) * 100
+                    else:
+                        change_raw = t.get('priceChangePercent', '0') or '0'
+                        change = float(str(change_raw).strip() or 0)
+
+                    result[sym] = {
+                        'price': price,
+                        'change': round(change, 2),
+                        'high': high,
+                        'low': low,
+                        'volume': vol,
+                        'source': 'MEXC'
+                    }
+                return jsonify(result)
+    except Exception as e:
+        log.warning(f"MEXC v3 scan error: {e}")
+
+    # Fallback — MEXC v2
+    try:
+        r = requests.get('https://www.mexc.com/open/api/v2/market/ticker', timeout=12)
+        if r.ok:
+            data = r.json().get('data', [])
+            result = {}
+            for t in data:
+                sym = t.get('symbol','')
+                if not sym.endswith('_USDT'): continue
+                sym = sym.replace('_USDT','')
+                if not sym: continue
+                price  = float(t.get('last', 0) or 0)
+                high   = float(t.get('high', 0) or 0)
+                low    = float(t.get('low', 0) or 0)
+                vol    = float(t.get('volume', 0) or 0)
+                if price <= 0: continue
+                # Calculate change from high/low midpoint if no change field
+                change_raw = t.get('priceChangePercent', '0') or '0'
+                change = float(str(change_raw).strip() or 0)
+                if change == 0 and low > 0:
+                    open_est = (high + low) / 2
+                    change = ((price - open_est) / open_est) * 100
+                result[sym] = {
+                    'price': price,
+                    'change': round(change, 2),
+                    'high': high,
+                    'low': low,
+                    'volume': vol,
+                    'source': 'MEXC'
+                }
+            return jsonify(result)
+    except Exception as e:
+        log.warning(f"MEXC v2 scan error: {e}")
+
+    return jsonify({'error': 'MEXC unavailable'}), 503
 def ticker():
     """Fetch price + 24H data for any token — tries multiple sources"""
     symbol = request.args.get('symbol', '').upper().replace('USDT','').replace('$','').replace('_','').strip()
