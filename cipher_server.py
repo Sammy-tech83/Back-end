@@ -111,61 +111,95 @@ def tickers():
 
 @app.route('/ticker', methods=['GET'])
 def ticker():
-    """Fetch price + 24H data for any token — tries MEXC, Binance, Bybit"""
-    symbol = request.args.get('symbol', '').upper().replace('USDT','').replace('$','').strip()
+    """Fetch price + 24H data for any token — tries multiple sources"""
+    symbol = request.args.get('symbol', '').upper().replace('USDT','').replace('$','').replace('_','').strip()
     if not symbol:
         return jsonify({'error': 'symbol required'}), 400
 
     price = change = high = low = vol = 0
     source = ''
 
-    # Try MEXC first
+    # Try MEXC v3 API (more reliable than v2)
     try:
-        r = requests.get(f"https://www.mexc.com/open/api/v2/market/ticker?symbol={symbol}_USDT", timeout=8)
-        d = r.json().get("data", [{}])
-        if d and isinstance(d, list): d = d[0]
-        if d and float(d.get("last", 0)) > 0:
-            price  = float(d.get("last", 0))
-            change = float(d.get("priceChangePercent", 0))
-            high   = float(d.get("high", 0))
-            low    = float(d.get("low", 0))
-            vol    = float(d.get("volume", 0))
+        r = requests.get(f"https://api.mexc.com/api/v3/ticker/24hr?symbol={symbol}USDT", timeout=8)
+        d = r.json()
+        if isinstance(d, dict) and float(d.get("lastPrice", 0)) > 0:
+            price  = float(d["lastPrice"])
+            change = float(d["priceChangePercent"])
+            high   = float(d["highPrice"])
+            low    = float(d["lowPrice"])
+            vol    = float(d.get("quoteVolume", 0))
             source = 'MEXC'
-    except: pass
+    except Exception as e:
+        log.warning(f"MEXC v3 error: {e}")
+
+    # Try MEXC v2 API
+    if not price:
+        try:
+            r = requests.get(f"https://www.mexc.com/open/api/v2/market/ticker?symbol={symbol}_USDT", timeout=8)
+            d = r.json().get("data", [])
+            if isinstance(d, list) and d: d = d[0]
+            if isinstance(d, dict) and float(d.get("last", 0)) > 0:
+                price  = float(d["last"])
+                change = float(d.get("priceChangePercent", 0))
+                high   = float(d.get("high", 0))
+                low    = float(d.get("low", 0))
+                vol    = float(d.get("volume", 0))
+                source = 'MEXC'
+        except Exception as e:
+            log.warning(f"MEXC v2 error: {e}")
 
     # Fallback Binance
     if not price:
         try:
             r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}USDT", timeout=8)
             d = r.json()
-            if float(d.get("lastPrice", 0)) > 0:
+            if isinstance(d, dict) and float(d.get("lastPrice", 0)) > 0:
                 price  = float(d["lastPrice"])
                 change = float(d["priceChangePercent"])
                 high   = float(d["highPrice"])
                 low    = float(d["lowPrice"])
-                vol    = float(d["quoteVolume"])
+                vol    = float(d.get("quoteVolume", 0))
                 source = 'BINANCE'
-        except: pass
+        except Exception as e:
+            log.warning(f"Binance error: {e}")
 
     # Fallback Bybit
     if not price:
         try:
             r = requests.get(f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={symbol}USDT", timeout=8)
             d = r.json()["result"]["list"][0]
-            price  = float(d["lastPrice"])
-            change = float(d.get("price24hPcnt", 0)) * 100
-            high   = float(d["highPrice24h"])
-            low    = float(d["lowPrice24h"])
-            source = 'BYBIT'
-        except: pass
+            if float(d.get("lastPrice", 0)) > 0:
+                price  = float(d["lastPrice"])
+                change = float(d.get("price24hPcnt", 0)) * 100
+                high   = float(d["highPrice24h"])
+                low    = float(d["lowPrice24h"])
+                source = 'BYBIT'
+        except Exception as e:
+            log.warning(f"Bybit error: {e}")
+
+    # Fallback OKX
+    if not price:
+        try:
+            r = requests.get(f"https://www.okx.com/api/v5/market/ticker?instId={symbol}-USDT", timeout=8)
+            d = r.json().get("data", [{}])[0]
+            if float(d.get("last", 0)) > 0:
+                price  = float(d["last"])
+                open24 = float(d.get("open24h", 1) or 1)
+                change = ((price - open24) / open24) * 100
+                high   = float(d["high24h"])
+                low    = float(d["low24h"])
+                source = 'OKX'
+        except Exception as e:
+            log.warning(f"OKX error: {e}")
 
     if not price:
-        return jsonify({'error': f'{symbol} not found on MEXC, Binance or Bybit'}), 404
+        return jsonify({'error': f'{symbol} not found on any exchange', 'symbol': symbol}), 404
 
     return jsonify({
         'symbol': symbol,
         'price': price,
-        'change': change,
+        'change': round(change, 4),
         'high': high,
         'low': low,
         'volume': vol,
@@ -179,4 +213,3 @@ def ping():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-    # v2
