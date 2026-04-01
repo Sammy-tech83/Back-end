@@ -201,6 +201,8 @@ def mexc_scan():
         log.warning(f"MEXC v2 scan error: {e}")
 
     return jsonify({'error': 'MEXC unavailable'}), 503
+
+@app.route('/ticker', methods=['GET'])
 def ticker():
     """Fetch price + 24H data for any token — tries multiple sources"""
     symbol = request.args.get('symbol', '').upper().replace('USDT','').replace('$','').replace('_','').strip()
