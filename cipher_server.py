@@ -297,50 +297,6 @@ def ticker():
         'source': source,
     })
 
-@app.route('/mexc-scan', methods=['GET'])
-def mexc_scan():
-    """Fetch ALL MEXC futures tickers for scanner"""
-    try:
-        # MEXC futures contract tickers
-        r = requests.get('https://contract.mexc.com/api/v1/contract/ticker', timeout=15)
-        data = r.json().get('data', [])
-        result = {}
-        for t in data:
-            sym = t.get('symbol', '').replace('_USDT', '').replace('USDT', '')
-            if not sym: continue
-            last = float(t.get('lastPrice', 0) or 0)
-            if last <= 0: continue
-            change = float(t.get('priceChangeRate', 0) or 0) * 100
-            high = float(t.get('high24Price', last) or last)
-            low = float(t.get('low24Price', last) or last)
-            result[sym] = {
-                'price': last,
-                'change': round(change, 4),
-                'high': high,
-                'low': low,
-                'sources': 1,
-            }
-        # Also merge Binance tickers for more coverage
-        try:
-            rb = requests.get('https://api.binance.com/api/v3/ticker/24hr', timeout=8)
-            for t in rb.json():
-                if not t.get('symbol','').endswith('USDT'): continue
-                sym = t['symbol'].replace('USDT','')
-                if sym in result: continue  # MEXC takes priority
-                last = float(t.get('lastPrice', 0) or 0)
-                if last <= 0: continue
-                result[sym] = {
-                    'price': last,
-                    'change': round(float(t.get('priceChangePercent', 0)), 4),
-                    'high': float(t.get('highPrice', last)),
-                    'low': float(t.get('lowPrice', last)),
-                    'sources': 1,
-                }
-        except: pass
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/ping', methods=['GET'])
 def ping():
     return jsonify({'status': 'CIPHER server online'})
