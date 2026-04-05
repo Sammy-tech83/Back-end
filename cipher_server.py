@@ -120,43 +120,78 @@ def tickers():
     ]
     for name, url in sources:
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, timeout=6)
             if not r.ok: continue
             data = r.json()
-            if name in ('binance', 'mexc') and isinstance(data, list):
+            if name == 'binance' and isinstance(data, list):
                 for t in data:
                     if t.get('symbol','').endswith('USDT'):
                         sym = t['symbol'].replace('USDT','')
                         if not sym: continue
+                        price = float(t.get('lastPrice', 0) or 0)
+                        if price <= 0: continue
                         all_prices.setdefault(sym,[]).append({
-                            'price':float(t.get('lastPrice',0)),
-                            'change':float(t.get('priceChangePercent',0)),
-                            'high':float(t.get('highPrice',0)),
-                            'low':float(t.get('lowPrice',0)),
-                            'source': name
+                            'price': price,
+                            'change': float(t.get('priceChangePercent', 0) or 0),
+                            'high': float(t.get('highPrice', 0) or 0),
+                            'low': float(t.get('lowPrice', 0) or 0),
+                        })
+            elif name == 'mexc' and isinstance(data, list):
+                for t in data:
+                    if t.get('symbol','').endswith('USDT'):
+                        sym = t['symbol'].replace('USDT','')
+                        if not sym: continue
+                        price = float(t.get('lastPrice', 0) or 0)
+                        open_price = float(t.get('openPrice', 0) or 0)
+                        if price <= 0: continue
+                        # Calculate change from openPrice — more reliable than priceChangePercent
+                        change = ((price - open_price) / open_price * 100) if open_price > 0 else 0
+                        all_prices.setdefault(sym,[]).append({
+                            'price': price,
+                            'change': round(change, 2),
+                            'high': float(t.get('highPrice', 0) or 0),
+                            'low': float(t.get('lowPrice', 0) or 0),
                         })
             elif name == 'bybit':
                 for t in data.get('result',{}).get('list',[]):
                     if t.get('symbol','').endswith('USDT'):
                         sym = t['symbol'].replace('USDT','')
-                        all_prices.setdefault(sym,[]).append({'price':float(t['lastPrice']),'change':float(t.get('price24hPcnt',0))*100,'high':float(t['highPrice24h']),'low':float(t['lowPrice24h']),'source':'bybit'})
+                        price = float(t.get('lastPrice', 0) or 0)
+                        if price <= 0: continue
+                        all_prices.setdefault(sym,[]).append({
+                            'price': price,
+                            'change': float(t.get('price24hPcnt', 0) or 0) * 100,
+                            'high': float(t.get('highPrice24h', 0) or 0),
+                            'low': float(t.get('lowPrice24h', 0) or 0),
+                        })
             elif name == 'okx':
                 for t in data.get('data',[]):
                     if t.get('instId','').endswith('-USDT'):
                         sym = t['instId'].replace('-USDT','')
-                        o = float(t.get('open24h',1) or 1); l = float(t.get('last',0))
-                        all_prices.setdefault(sym,[]).append({'price':l,'change':((l-o)/o)*100,'high':float(t['high24h']),'low':float(t['low24h']),'source':'okx'})
-        except: continue
+                        last = float(t.get('last', 0) or 0)
+                        open24 = float(t.get('open24h', 0) or 0)
+                        if last <= 0: continue
+                        change = ((last - open24) / open24 * 100) if open24 > 0 else 0
+                        all_prices.setdefault(sym,[]).append({
+                            'price': last,
+                            'change': round(change, 2),
+                            'high': float(t.get('high24h', 0) or 0),
+                            'low': float(t.get('low24h', 0) or 0),
+                        })
+        except Exception as e:
+            log.warning(f"Tickers {name} error: {e}")
+            continue
 
     result = {
         sym: {
-            'price':  sum(p['price']  for p in ps) / len(ps),
-            'change': sum(p['change'] for p in ps) / len(ps),
-            'high':   max(p['high']   for p in ps),
-            'low':    min(p['low']    for p in ps),
-            'sources': len(ps)
+            'price':   round(sum(p['price']  for p in ps) / len(ps), 8),
+            'change':  round(sum(p['change'] for p in ps) / len(ps), 2),
+            'high':    max(p['high'] for p in ps),
+            'low':     min(p['low']  for p in ps),
+            'sources': len(ps),
         }
-        for sym, ps in all_prices.items() if ps and sum(p['price'] for p in ps)/len(ps) > 0
+        for sym, ps in all_prices.items()
+        if ps and sum(p['price'] for p in ps) / len(ps) > 0
     }
     return jsonify(result)
 
