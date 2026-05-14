@@ -31,9 +31,13 @@ def analyze():
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={'Content-Type':'application/json','x-api-key':ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-            json={'model':'claude-sonnet-4-20250514','max_tokens':1000,'messages':[{'role':'user','content':prompt}]}
+            json={'model':'claude-3-5-sonnet-20241022','max_tokens':1000,'messages':[{'role':'user','content':prompt}]}
         )
-        return jsonify(response.json())
+        rj = response.json()
+        if not response.ok or rj.get('type') == 'error':
+            msg = rj.get('error', {}).get('message', f'Anthropic error {response.status_code}')
+            return jsonify({'error': msg}), 502
+        return jsonify(rj)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
